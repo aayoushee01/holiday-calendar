@@ -1,6 +1,7 @@
 import React, { Component, ChangeEvent } from 'react';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
+import multiMonthPlugin from '@fullcalendar/multimonth';
 
 interface Holiday {
   country: string;
@@ -15,8 +16,9 @@ interface Holiday {
 interface CalendarState {
   holidays: any[];
   isLoading: boolean;
-  selectedCountry: string;
   selectedYear: number;
+  location: string;
+  geolocationError: boolean;
 }
 
 class Calendar extends Component<{}, CalendarState> {
@@ -25,25 +27,61 @@ class Calendar extends Component<{}, CalendarState> {
     this.state = {
       holidays: [],
       isLoading: false,
-      selectedCountry: 'CA',
-      selectedYear: new Date().getFullYear()
+      selectedYear: new Date().getFullYear(),
+      location: 'US',
+      geolocationError: false,
     };
   }
 
-  handleChangeCountry = (event: ChangeEvent<HTMLSelectElement>) => {
-    this.setState({ selectedCountry: event.target.value }, () => {
+  componentDidMount() {
+    if ('geolocation' in navigator) {
+      navigator.geolocation.getCurrentPosition(
+        this.handleLocationSuccess,
+        this.handleLocationError
+      );
+    } else {
+      console.error('Geolocation is not supported.');
+      this.setState({ geolocationError: true });
       this.fetchHolidays();
-    });
+    }
+  }
+
+  handleLocationSuccess = (position: GeolocationPosition) => {
+    const { latitude, longitude } = position.coords;
+    const geocode_key = process.env.REACT_APP_GEOCODE_API_KEY
+    fetch(`https://api.opencagedata.com/geocode/v1/json?q=${latitude}+${longitude}&key=${geocode_key}`)
+      .then(response => response.json())
+      .then(data => {
+        const countryCode = data.results[0].components['ISO_3166-1_alpha-2'];
+        console.log(countryCode);
+        this.setState({ location: countryCode });
+        this.fetchHolidays();
+      })
+      .catch(error => {
+        console.error('Error fetching default location:', error);
+        this.fetchHolidays();
+      });
+  };
+
+  handleLocationError = (error: GeolocationPositionError) => {
+    console.error('Error getting location:', error.message);
+    this.setState({ geolocationError: true });
+    this.fetchHolidays();
+  };
+
+  handleLocationChange = (event: ChangeEvent<HTMLInputElement>) => {
+    this.setState({ location: event.target.value });
+    this.fetchHolidays();
   };
 
   fetchHolidays = () => {
-    const { selectedCountry, selectedYear } = this.state;
+    const { selectedYear, location } = this.state;
 
     this.setState({ isLoading: true });
 
-    fetch(`https://api.api-ninjas.com/v1/holidays?country=${selectedCountry}&year=${selectedYear}`, {
+    fetch(`https://api.api-ninjas.com/v1/holidays?country=${location}&year=${selectedYear}&type=major_holiday`, {
       headers: {
-        'X-Api-Key': 'pX4U/gwLvF/rbSokQ2ClYA==ueajTJ35XyPrFTgp'
+        'X-Api-Key': process.env.REACT_APP_HOLIDAYS_API_KEY || ''
       }
     })
       .then(response => response.json())
@@ -63,16 +101,27 @@ class Calendar extends Component<{}, CalendarState> {
       .catch(error => console.error('Error fetching holidays:', error));
   };
 
-  componentDidMount() {
-    this.fetchHolidays();
-  }
-
   render() {
-    const { holidays, isLoading, selectedCountry, selectedYear } = this.state;
+    const { holidays, isLoading, location, geolocationError } = this.state;
+
+    if (geolocationError) {
+      return <div>Error: Geolocation is not supported.</div>;
+    }
 
     if (isLoading) {
       return <div>Loading...</div>;
     }
+
+    const calendarOptions = {
+      initialView: 'dayGridMonth',
+      plugins: [dayGridPlugin, multiMonthPlugin],
+      events: holidays,
+      headerToolbar: {
+        left: 'prev,next',
+        center: 'title',
+        right: 'dayGridMonth,multiMonthYear'
+      }
+    };
 
     return (
       <div className="container mx-auto p-4">
@@ -82,12 +131,16 @@ class Calendar extends Component<{}, CalendarState> {
           </div>
         </div>
         <div className="mb-4">
-          <label htmlFor="country" className="mr-2">Select Country:</label>
-          <select id="country" value={selectedCountry} onChange={this.handleChangeCountry}>
-            <option value="CA">Canada</option>
-          </select>
+          <label htmlFor="location" className="mr-2">Location (Enter ISO 3166 code) :</label>
+          <input
+            id="location"
+            type="text"
+            value={location}
+            onChange={this.handleLocationChange}
+          />
+          <button type="submit" onClick={this.fetchHolidays} style={{ backgroundColor: '#2c3e50', color: 'white' }}>Get Holidays</button>
         </div>
-        <FullCalendar initialView="dayGridMonth" plugins={[dayGridPlugin]} events={holidays} />
+        <FullCalendar {...calendarOptions} />
       </div>
     );
   }
